@@ -1,18 +1,12 @@
-# Publishes the site to GitHub Pages on every push to main.
-# Turn it on: Settings → Pages → Source: GitHub Actions, then
-# Settings → Secrets and variables → Actions → Variables: DEPLOY_PAGES = true.
-# (Or run it by hand from the Actions tab.)
-#
-# The main Homecraft repository also sets HOMECRAFT_DIRECTORY = true: its site
-# then carries worlds.json, the shared directory every Homecraft portal reads,
-# rebuilt from directory/ on each push and re-checked every Monday so worlds
-# that stopped answering drop out (docs/worlds.md). Forks never need it.
+# 每次 push、每天定时、或手动触发时：先同步博客文章，再构建并发布到 GitHub Pages。
+# 仓库设置：Settings → Pages → Source: GitHub Actions
+#          Settings → Secrets and variables → Actions → Variables: DEPLOY_PAGES = true
 name: Pages
 on:
   push:
     branches: [main]
   schedule:
-    - cron: '17 3 * * 1'
+    - cron: '17 1 * * *' # 每天 09:17（北京时间）拉一次博客，新文章自动上架
   workflow_dispatch:
 permissions:
   contents: read
@@ -23,7 +17,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   deploy:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && vars.DEPLOY_PAGES == 'true') || (github.event_name == 'schedule' && vars.HOMECRAFT_DIRECTORY == 'true')
+    if: github.event_name == 'workflow_dispatch' || vars.DEPLOY_PAGES == 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -33,10 +27,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Sync posts from the blog
+        # 博客临时打不开时不要让整站挂掉：沿用仓库里上一次的 world/posts.js
+        continue-on-error: true
+        run: node tools/sync-blog.mjs
       - run: bash tools/build.sh
-      - name: The shared directory (main repository only)
-        if: vars.HOMECRAFT_DIRECTORY == 'true'
-        run: node tools/directory.mjs build dist/worlds.json --online
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

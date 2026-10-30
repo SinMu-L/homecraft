@@ -1,9 +1,11 @@
 {
   "version": 1,
-  "name": "My Home",
-  "url": "",
+  "name": "极目的家",
+  "url": "https://sinmu.xyz/",
   "logo": "assets/favicon.png",
-  "intro": "",
-  "lang": ["zh", "en"],
+  "intro": {
+    "zh": "自动化工程师的方块小屋，书房里放着我的全部文章"
+  },
+  "lang": ["zh"],
   "homecraft": true
 }
