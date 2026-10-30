@@ -36,6 +36,15 @@
     <ul class="store" id="post-list"></ul>
   </article>
 
+  <article class="page" data-station="writing">
+    <h2 data-zh="这几年">Timeline</h2>
+    <div class="about">
+      <div class="about-text" lang="zh-CN">
+        <p>2021 开始写博客 · 2023 入坑自动化 · 2024 折腾 AI 与 Web 逆向 · 2025 把博客搬进我的世界 · 2026 住进了这座岛。</p>
+      </div>
+    </div>
+  </article>
+
   <article class="page" data-station="blog" data-icon="blog" data-embed="https://blog.sinmu.xyz/">
     <h2 data-zh="博客">Blog</h2>
     <p><a href="https://blog.sinmu.xyz/" target="_blank" rel="noopener">blog.sinmu.xyz ↗</a></p>
@@ -114,7 +123,7 @@ if (location.protocol === 'file:') {
 <noscript><style>#world,#hud,#loading{display:none}#pages{display:block}</style></noscript>
 <script type="module" src="engine/main.js"></script>
 
-<!-- 深链：文章页放 https://sinmu.xyz/?post=P23 就能直接飞到那篇文章的展位 -->
+<!-- 深链：文章页放 https://home.sinmu.xyz/?post=P23 就能直接飞到那篇文章的展位 -->
 <script type="module">
   const post = new URLSearchParams(location.search).get('post');
   if (post) {
