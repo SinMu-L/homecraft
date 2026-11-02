@@ -94,27 +94,95 @@ export function createGolem({ x, z, yaw }) {
   root.rotation.y = yaw;
   let t = Math.random() * 6;
   upload();
-  // 巡逻：沿一条线段来回走，到端点停一会儿再转身。
-  let dir = 1, wait = 0;
-  function update(dt, nav) {
+  // 在露台一带随机巡逻（走 A* 路径，不会卡进墙里）；玩家走近时停下盯着他。
+  const feet = walker({ root, home: { x, z }, range: 6.5, speed: 0.62 });
+  let navRef = null, headYaw = 0;
+  const NOTICE = 6.5;   // 多远开始注意到玩家
+  function update(dt, nav, player) {
     t += dt;
-    if (wait > 0) { wait -= dt; }
-    else {
-      const speed = 0.55 * dt;
-      const nx = root.position.x + Math.sin(root.rotation.y) * speed * dir;
-      const nz = root.position.z + Math.cos(root.rotation.y) * speed * dir;
-      if (nav && !nav.canStand(nx, nz)) { wait = 1.6; dir = -dir; }
-      else { root.position.x = nx; root.position.z = nz; }
-      if (Math.abs(root.position.x - x) > 4.5 || Math.abs(root.position.z - z) > 4.5) { wait = 1.6; dir = -dir; }
+    if (nav) navRef = nav;
+    // 玩家在附近就停下来看他
+    let facing = false;
+    if (player) {
+      const dx = player.pos.x - root.position.x, dz = player.pos.z - root.position.z;
+      const d = Math.hypot(dx, dz);
+      facing = d < NOTICE && player.y < 2;
+      if (facing) {
+        // 身体转向玩家（视线高度对不上也无所谓，铁傀儡本来就低头看人）
+        const goal = Math.atan2(dx, dz);
+        const diff = Math.atan2(Math.sin(goal - root.rotation.y), Math.cos(goal - root.rotation.y));
+        root.rotation.y += diff * Math.min(1, dt * 3.2);
+      }
     }
-    const walk = wait <= 0;
+    const walk = !facing && feet.step(dt, navRef);
     const swing = walk ? Math.sin(t * 5.2) * 0.5 : 0;
     legs[0].rotation.x = swing; legs[1].rotation.x = -swing;
     arms[0].rotation.x = -swing * 0.8; arms[1].rotation.x = swing * 0.8;
+    // 看着玩家时头部微微前倾，像在打量
+    headYaw += ((facing ? -0.16 : 0) - headYaw) * Math.min(1, dt * 4);
+    head.rotation.x = headYaw;
     torso.position.y = 1.62 + (walk ? Math.abs(Math.sin(t * 5.2)) * 0.035 : Math.sin(t * 0.9) * 0.012);
     upload();
   }
   return { root, mesh, update };
+}
+
+// ---- 会走路的居民 --------------------------------------------------------
+// 村民、铁傀儡、商人都用这一套：在一小块区域里挑一个能站的目标，用 nav 的
+// A* 走过去，到了就发呆一会儿再挑下一个。没有可走的路就原地待着。
+// 碰撞由 nav.canStand 保证，不会走进家具和墙里。
+function walker({ root, home, range, speed }) {
+  let path = null, point = 0, wait = 0.6 + Math.random() * 2.2, heading = root.rotation.y;
+
+  function pick(nav) {
+    // 厨房和咖啡吧周围障碍多，先按半径随机撒点，多试几次；都不行就退一档
+    // 用 nav.nearestStand 找最近的一块空地。
+    for (let tries = 0; tries < 24; tries++) {
+      const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * range;
+      const tx = home.x + Math.sin(a) * r, tz = home.z + Math.cos(a) * r;
+      if (!nav.canStand(tx, tz) || Math.abs(nav.heightAt(tx, tz)) > 0.5) continue;
+      const p = nav.findPath({ x: root.position.x, z: root.position.z }, { x: tx, z: tz });
+      if (p?.length) { path = p; point = 0; return true; }
+    }
+    // 兜底：在自己周围找一处能站的地方，哪怕只挪一小步。
+    const a = Math.random() * Math.PI * 2;
+    const spot = nav.nearestStand(root.position.x + Math.sin(a) * 1.6, root.position.z + Math.cos(a) * 1.6);
+    if (spot && Math.hypot(spot.x - root.position.x, spot.z - root.position.z) > 0.4) {
+      const p = nav.findPath({ x: root.position.x, z: root.position.z }, spot);
+      if (p?.length) { path = p; point = 0; return true; }
+      path = [spot]; point = 0; return true;
+    }
+    return false;
+  }
+
+  // 返回 true 表示这一帧在走路（调用方据此摆动腿和手臂）。
+  function step(dt, nav) {
+    if (!nav) return false;
+    if (path) {
+      const next = path[point];
+      const dx = next.x - root.position.x, dz = next.z - root.position.z;
+      const d = Math.hypot(dx, dz);
+      const move = Math.min(d, dt * speed);
+      if (d > 0.001) {
+        root.position.x += dx / d * move;
+        root.position.z += dz / d * move;
+        heading = Math.atan2(dx, dz);
+      }
+      // 平滑转向，不要瞬间甩头
+      const diff = Math.atan2(Math.sin(heading - root.rotation.y), Math.cos(heading - root.rotation.y));
+      root.rotation.y += diff * Math.min(1, dt * 7);
+      if (d <= move + 0.001 && ++point >= path.length) {
+        path = null;
+        wait = 1.6 + Math.random() * 4.5;
+      }
+      return true;
+    }
+    wait -= dt;
+    if (wait <= 0) { if (!pick(nav)) wait = 1.5; }
+    return false;
+  }
+
+  return { step, get walking() { return !!path; } };
 }
 
 // ---- 村民 ----------------------------------------------------------------
@@ -158,19 +226,36 @@ export function createVillager({ x, z, yaw, robe = 0x6b7b52, work = 'idle' }) {
   root.rotation.y = yaw;
   let t = Math.random() * 5;
   upload();
-  function update(dt) {
+  // 在家的周围几米内随机走动；停下时才做工作动作。
+  const feet = walker({ root, home: { x, z }, range: 3.4, speed: 0.85 });
+  let navRef = null;
+  function update(dt, nav) {
     t += dt;
-    if (work === 'chop') {
+    if (nav) navRef = nav;
+    const moving = feet.step(dt, navRef);
+    if (moving) {
+      // 走路：腿交替、手臂轻轻前后、不再做工作动作
+      const stride = Math.sin(t * 7);
+      legs[0].rotation.x = stride * 0.42; legs[1].rotation.x = -stride * 0.42;
+      arms[0].rotation.x = -1.15 + stride * 0.16;
+      arms[1].rotation.x = -1.15 - stride * 0.16;
+      torso.rotation.x = 0; head.rotation.x = 0;
+    } else if (work === 'chop') {
       // 切菜：右臂上下，身体轻微起伏
+      legs[0].rotation.x = legs[1].rotation.x = 0;
       arms[1].rotation.x = -1.15 + Math.abs(Math.sin(t * 6)) * 0.55;
+      arms[0].rotation.x = -1.15;
       torso.rotation.x = Math.sin(t * 6) * 0.05;
     } else if (work === 'sip') {
       // 端杯子：手臂抬到嘴边，偶尔抿一口
+      legs[0].rotation.x = legs[1].rotation.x = 0;
       const lift = 0.5 + Math.max(0, Math.sin(t * 0.8)) * 0.35;
+      arms[1].rotation.x = -1.15;
       arms[0].rotation.x = -1.15 - lift;
       head.rotation.x = -Math.max(0, Math.sin(t * 0.8)) * 0.18;
     } else {
-      // 站着张望：头缓慢左右转
+      legs[0].rotation.x = legs[1].rotation.x = 0;
+      arms[0].rotation.x = arms[1].rotation.x = -1.15;
       head.rotation.y = Math.sin(t * 0.55) * 0.5;
     }
     torso.position.y = 1.05 + Math.sin(t * 1.6) * 0.012;
