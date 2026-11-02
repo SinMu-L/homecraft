@@ -59,6 +59,27 @@ export const BACKDOOR = { x0: 13, x1: 15 };
 
 export const SPAWN = { x: 0.5, z: 5.8, heading: Math.PI };
 
+// 岛上的居民。位置都避开走道与家具：铁傀儡在露台站岗，村民分别待在
+// 厨房中岛和咖啡吧，商人带着两只羊驼在传送门旁做生意，动物在后山脚
+// 的草地上。yaw 0 朝南（+z）。
+export const MOBS = {
+  golem: { x: 12.5, z: 18.2, yaw: 2.4 },
+  villagers: [
+    { x: 17.6, z: 6.6, yaw: 3.6, work: 'chop' },   // 灶台前切菜
+    { x: 15.2, z: 12.0, yaw: 0.4, work: 'sip' },   // 咖啡吧端着杯子
+  ],
+  trader: { x: 4.2, z: 24.6, yaw: 0.9 },           // 传送门旁
+  animals: [
+    { kind: 'cow', x: -14, z: -20, yaw: 1.2 },
+    { kind: 'cow', x: -16.5, z: -17.5, yaw: 2.1 },
+    { kind: 'sheep', x: -10, z: -21, yaw: 0.3 },
+    { kind: 'sheep', x: -8, z: -18, yaw: 4.0 },
+    { kind: 'pig', x: -12.5, z: -16.5, yaw: 2.8 },
+    { kind: 'chicken', x: -6, z: -20.5, yaw: 1.0 },
+    { kind: 'chicken', x: -4.5, z: -18.5, yaw: 5.2 },
+  ],
+};
+
 // Each station is something in the house you can walk up to. `at` is where the
 // player stands, `look` the point they turn to face; `name` is Chinese, `en` English.
 export const STATIONS = [

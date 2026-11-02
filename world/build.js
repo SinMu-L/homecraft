@@ -9,7 +9,8 @@ import { buildMountain } from './mountain.js';
 import { buildRoofAccess } from './roof-access.js';
 import { createStainless } from './stainless.js';
 import { createVertec } from './vertec.js';
-import { ISLAND, FOREST, COURT, RIM } from './layout.js';
+import { createGolem, createVillager, createTrader, createAnimal } from './mobs.js';
+import { ISLAND, FOREST, COURT, RIM, MOBS } from './layout.js';
 
 export function build({ grid, layer, materials, stage }) {
   // The kitchen's brushed steel is a real metal, with its own room reflection.
@@ -50,14 +51,25 @@ function drawMap(ctx, X, Z, PPM) {
 }
 
 // The moving parts the engine does not know about: the Vertec in the gym
-// (jump beside it and the vanes swing) and the sailboat rocking at the pier.
-export function setup({ stage, world, player, avatar, sound }) {
+// (jump beside it and the vanes swing), the sailboat rocking at the pier,
+// and the island's inhabitants.
+export function setup({ stage, world, player, avatar, sound, nav }) {
   const vertec = createVertec({ avatar, sound });
   stage.scene.add(vertec.mesh);
+  // 岛上的居民：一只会巡逻的铁傀儡、两个干活的村民、一个牵羊驼的商人，
+  // 以及后山脚下的鸡牛羊猪。
+  const mobs = [
+    createGolem(MOBS.golem),
+    ...MOBS.villagers.map(v => createVillager(v)),
+    createTrader(MOBS.trader),
+    ...MOBS.animals.map(a => createAnimal(a)),
+  ];
+  for (const m of mobs) stage.scene.add(m.root);
   return {
     update(dt) {
       vertec.update(dt, player);
       world.outer.update(dt, stage.camera);
+      for (const m of mobs) m.update(dt, nav, player);
     },
   };
 }
