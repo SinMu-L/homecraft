@@ -9,8 +9,10 @@ import { createCar } from './car.js';
 import { buildFloorPlants } from './plants.js';
 import posts from './posts.js';
 import { HOUSE, COURT, RIM, VERTEC, LOFT, STAIRS, SECRET, GARAGE, POOL, POOL_LAMPS, ENTRANCE, BACKDOOR, ROOF_GLASS } from './layout.js';
+import { BOARD } from './board.js';
 
 // 写字台后面的黑板换成"最新文章板"：标题像素字，正文系统字体。
+const PX_TO_M = BOARD.h / 1024;          // 画布像素 → 世界米
 function paintPostsBoard(ctx, w, h) {
   ctx.fillStyle = '#2f2a24';
   ctx.fillRect(0, 0, w, h);
@@ -18,8 +20,8 @@ function paintPostsBoard(ctx, w, h) {
   ctx.lineWidth = 16;
   ctx.strokeRect(10, 10, w - 20, h - 20);
   pixelText(ctx, 'LATEST POSTS', 64, 72, 7, '#e9d9ae');
-  posts.slice(0, 8).forEach((p, i) => {
-    const y = 260 + i * 92;
+  posts.slice(0, BOARD.rows).forEach((p, i) => {
+    const y = BOARD.firstPx + i * BOARD.rowPx;
     ctx.font = '500 46px "Microsoft YaHei", "PingFang SC", sans-serif';
     ctx.fillStyle = '#b9a781';
     ctx.fillText(p.date, 64, y);
@@ -309,8 +311,14 @@ export function furnish({ layer }) {
   ergonomicChair(B, 4.05, -9.1, -Math.PI / 2); foot(4.05, -9.1, 0.85, 0.85);
   // The thinking board is mounted directly on the north wall, leaving the
   // aisle open. The chalk content remains a draft of ideas and future goals.
-  B.box(-1.05, 0.85, -11.91, 3.6, 2.45, 0.12, L.panel);
-  plane(3.43, 2.28, canvasTexture(1536, 1024, paintPostsBoard, { pixelated: false }), -1.05, 2.075, -11.84);
+  B.box(BOARD.cx, 0.85, -11.91, 3.6, 2.45, 0.12, L.panel);
+  plane(BOARD.w, BOARD.h, canvasTexture(1536, 1024, paintPostsBoard, { pixelated: false }), BOARD.cx, BOARD.cy, BOARD.cz);
+  // 每一行一个热点：走近哪一行，提示的就是那篇文章，按 F 打开它。
+  const boardTop = BOARD.cy + BOARD.h / 2;
+  posts.slice(0, BOARD.rows).forEach((p, i) => {
+    const yBottom = boardTop - (BOARD.firstPx + (i + 1) * BOARD.rowPx - 14) * PX_TO_M;
+    hot(`post-${p.id}`, BOARD.cx, yBottom, BOARD.cz + 0.04, BOARD.w - 0.15, BOARD.rowPx * PX_TO_M, 0.16);
+  });
   B.box(-1.05, 3.31, -11.8, 3.5, 0.025, 0.055, L.light(0xffdfa7));
   bake('thinking-board', -1.05, 3.34, -11.5, 1.15, 4, [0, -1, -.3]);
   // A black pegboard, about the chalkboard's size, is mounted over the wall
@@ -318,7 +326,8 @@ export function furnish({ layer }) {
   const pegX = 2.95, pegFace = -11.84, pegDepth = .06;
   B.box(pegX, 1.1, pegFace - pegDepth / 2, 3.6, 2.2, pegDepth, L.steel, { tag: 'work-wall-pegboard' });
   plane(3.6, 2.2, paint(1080, 660, P.paintPegboard), pegX, 2.2, pegFace + .005);
-  hot('library', 2, 0, -9.7, 7.3, 3.4, 4.5);
+  // 这里不再给 library 建热点：热点盒贴在地面高度，会把墙上文章行的
+  // 近距判定全抢走。书架改由 layout.js 里的 at 坐标触发（半径 2.6 米）。
 
   // Three framed keepsakes remain as decoration, without an interactive page.
   B.box(7.7, 0, -11.6, 3.4, 0.65, 0.6, L.wood); foot(7.7, -11.6, 3.5, 0.7);

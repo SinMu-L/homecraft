@@ -1,5 +1,7 @@
 // Where everything is. One block = one metre; x runs east, z runs south
 // (towards the pool and the default camera), y is up. The ground is y = 0.
+import posts from './posts.js';
+import { BOARD } from './board.js';
 
 // The south shore ends at the pool; its last sea-facing cell is submerged.
 export const ISLAND = { x0: -36, x1: 38, z0: -26, z1: 31 };
@@ -60,8 +62,8 @@ export const SPAWN = { x: 0.5, z: 5.8, heading: Math.PI };
 // Each station is something in the house you can walk up to. `at` is where the
 // player stands, `look` the point they turn to face; `name` is Chinese, `en` English.
 export const STATIONS = [
-  // 写作台：黑板改成了最新文章板，书桌区按 F 看全部文章。
-  { id: 'library', name: '书架', en: 'Library', icon: 'blog', at: [1.2, -8.3], look: [2.3, -10.95] },
+  // 文章板前：板就是最新文章的入口，按 F 打开书架（全部文章，点标题看内容）。
+  { id: 'library', name: '最新文章', en: 'Latest posts', icon: 'blog', at: BOARD.at, look: [BOARD.cx, BOARD.cz] },
   { id: 'writing', name: '主卧', en: 'Bedroom', at: [-8.2, -6.2], look: [-12, -9.65], floor: LOFT.y },
   // 客厅电视：大屏幕看博客，卡片内嵌 blog.sinmu.xyz。
   { id: 'blog', name: '博客', en: 'Blog', icon: 'blog', at: [0.5, -3.2], look: [-3.2, -3.2] },
@@ -81,6 +83,11 @@ export const STATIONS = [
   // In front of the portal: walk in, click it, or press F here, to visit other worlds.
   { id: 'portal', name: '传送门', en: 'Portal', icon: 'portal', at: [PORTAL.x + Math.sin(PORTAL.yaw) * 2.4, PORTAL.z + Math.cos(PORTAL.yaw) * 2.4], look: [PORTAL.x, PORTAL.z] },
 ];
+
+// 站在文章板前：提示「最新文章」，按 F 打开书架（全部文章，点标题看内容）。
+// 板上每一行仍有一个热点（见 world/furnish.js），留给第一人称准星拾取：
+// 引擎现在的近距判定按玩家胸口到热点盒的距离算，各行的水平位置相同，
+// 分成 8 个站位只会让提示永远选中第一篇，所以这里只登记一个。
 
 const inside = (r, x, z) => x >= r.x0 && x < r.x1 && z >= r.z0 && z < r.z1;
 
