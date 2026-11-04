@@ -65,8 +65,8 @@ export const SPAWN = { x: 0.5, z: 5.8, heading: Math.PI };
 export const MOBS = {
   golem: { x: 12.5, z: 18.2, yaw: 2.4 },
   villagers: [
-    { x: 17.6, z: 6.6, yaw: 3.6, work: 'chop' },   // 灶台前切菜
-    { x: 15.2, z: 12.0, yaw: 0.4, work: 'sip' },   // 咖啡吧端着杯子
+    { x: 17.6, z: 6.6, yaw: 3.6, station: 'coffee', work: 'chop' },   // 灶台前切菜
+    { x: 15.2, z: 12.0, yaw: 0.4, station: 'coffee', work: 'sip' },   // 咖啡吧端着杯子
   ],
   trader: { x: 4.2, z: 24.6, yaw: 0.9 },           // 传送门旁
   animals: [
