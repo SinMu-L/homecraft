@@ -45,13 +45,6 @@ function tick(pair, seconds, dt = 1 / 60) {
   }
 }
 
-// 骨头上的 Mesh（带顶点色）；脚下的影子是普通圆片，颜色属性不同，排除掉。
-function boneMeshes(f) {
-  const out = [];
-  f.root.traverse(o => { if (o.isMesh && o.geometry.attributes.color) out.push(o); });
-  return out;
-}
-
 // 从某点看向某点的视锥，和引擎渲染时用的是同一套数学。
 function frustumAt(position, target, fov = 62, aspect = 1.6) {
   const camera = new THREE.PerspectiveCamera(fov, aspect, 0.1, 300);
@@ -65,16 +58,11 @@ function frustumAt(position, target, fov = 62, aspect = 1.6) {
 
 const worldPos = o => o.getWorldPosition(new THREE.Vector3());
 
-// 所有骨头几何在世界空间里的包围盒（不含脚下的影子）。
+// 蒙皮后的包围盒（不含脚下的影子）。SkinnedMesh 会按当前骨骼重新算。
 function boneBox(f) {
-  f.root.updateMatrixWorld(true);
-  const box = new THREE.Box3(), tmp = new THREE.Box3();
-  for (const m of boneMeshes(f)) {
-    if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
-    tmp.copy(m.geometry.boundingBox).applyMatrix4(m.matrixWorld);
-    box.union(tmp);
-  }
-  return box;
+  f.sync();
+  f.mesh.computeBoundingBox();
+  return f.mesh.boundingBox.clone().applyMatrix4(f.mesh.matrixWorld);
 }
 
 console.log('\n# 出生位置');
@@ -91,19 +79,58 @@ console.log('\n# 出生位置');
     Math.abs(zombie.root.position.x - ARENA.cx) <= ARENA.half);
 }
 
-console.log('\n# 骨架结构（普通 Mesh，不是 InstancedMesh）');
+console.log('\n# 骨架结构（一块蒙皮网格 + 13 根骨头）');
 {
   const { golem, zombie } = makePair();
   for (const [name, f] of [['铁傀儡', golem], ['僵尸', zombie]]) {
-    const meshes = boneMeshes(f);
-    ok(`${name}有 5 块骨头几何`, meshes.length === 5, `count=${meshes.length}`);
-    ok(`${name}没有用 InstancedMesh`, meshes.every(m => !m.isInstancedMesh));
-    ok(`${name}几何带顶点色`, meshes.every(m => !!m.geometry.attributes.color));
-    ok(`${name}几何带法线`, meshes.every(m => !!m.geometry.attributes.normal));
-    ok(`${name}几何有三角面`, meshes.every(m => m.geometry.index && m.geometry.index.count > 0));
-    ok(`${name}每块几何都有包围球`, meshes.every(m => m.geometry.boundingSphere && Number.isFinite(m.geometry.boundingSphere.radius)));
-    ok(`${name}包围球不为空`, meshes.every(m => m.geometry.boundingSphere.radius > 0.05));
-    ok(`${name}骨头都挂在 root 下`, meshes.every(m => { let p = m; while (p) { if (p === f.root) return true; p = p.parent; } return false; }));
+    const mesh = f.mesh, g = mesh.geometry, bones = mesh.skeleton.bones;
+    ok(`${name}是一块 SkinnedMesh`, mesh.isSkinnedMesh === true);
+    ok(`${name}没有用 InstancedMesh`, !mesh.isInstancedMesh);
+    ok(`${name}几何带顶点色`, !!g.attributes.color);
+    ok(`${name}几何带法线`, !!g.attributes.normal);
+    ok(`${name}几何有三角面`, !!(g.index && g.index.count > 0));
+    ok(`${name}几何带蒙皮索引和权重`, !!g.attributes.skinIndex && !!g.attributes.skinWeight);
+    ok(`${name}蒙皮索引与顶点数一致`, g.attributes.skinIndex.count === g.attributes.position.count);
+    ok(`${name}几何有包围球`, g.boundingSphere && Number.isFinite(g.boundingSphere.radius));
+    ok(`${name}包围球不为空`, g.boundingSphere.radius > 0.05);
+    ok(`${name}有 13 根骨头`, bones.length === 13, `count=${bones.length}`);
+    ok(`${name}肩肘髋膝踝都有`, ['shoulderR', 'elbowR', 'hipR', 'kneeR', 'ankleR', 'shoulderL', 'elbowL', 'hipL', 'kneeL', 'ankleL']
+      .every(n => bones.some(b => b.name === n)));
+    ok(`${name}骨头都挂在 root 下`, bones.every(b => { let p = b; while (p) { if (p === f.root) return true; p = p.parent; } return false; }));
+  }
+}
+
+console.log('\n# 关节真的会弯');
+{
+  const { golem, zombie } = makePair();
+  const tracks = {
+    golem: { elbow: [Infinity, -Infinity], knee: [Infinity, -Infinity], shoulder: [Infinity, -Infinity], ankle: [Infinity, -Infinity] },
+    zombie: { elbow: [Infinity, -Infinity], knee: [Infinity, -Infinity], shoulder: [Infinity, -Infinity], ankle: [Infinity, -Infinity] },
+  };
+  for (let i = 0; i < 60 * 24; i++) {
+    golem.update(1 / 60, null, null);
+    zombie.update(1 / 60, null, null);
+    for (const [name, f] of [['golem', golem], ['zombie', zombie]]) {
+      const t = tracks[name];
+      for (let k = 0; k < 2; k++) {
+        for (const [key, v] of [
+          ['elbow', f.bones.arms[k].elbow.rotation.x],
+          ['shoulder', f.bones.arms[k].shoulder.rotation.x],
+          ['knee', f.bones.legs[k].knee.rotation.x],
+          ['ankle', f.bones.legs[k].ankle.rotation.x],
+        ]) {
+          t[key][0] = Math.min(t[key][0], v);
+          t[key][1] = Math.max(t[key][1], v);
+        }
+      }
+    }
+  }
+  for (const [name, t] of Object.entries(tracks)) {
+    const range = k => t[k][1] - t[k][0];
+    ok(`${name}肘关节弯曲过`, range('elbow') > 0.8, `range=${range('elbow').toFixed(2)}`);
+    ok(`${name}肩关节摆动过`, range('shoulder') > 0.6, `range=${range('shoulder').toFixed(2)}`);
+    ok(`${name}膝关节弯曲过`, range('knee') > 0.5, `range=${range('knee').toFixed(2)}`);
+    ok(`${name}踝关节在动`, range('ankle') > 0.3, `range=${range('ankle').toFixed(2)}`);
   }
 }
 
@@ -115,13 +142,11 @@ console.log('\n# 站在擂台边能看见斗士');
   // 站在擂台北侧往南看（玩家 teleport(44, 6) 之后大致就是这个视角）。
   const view = frustumAt([ARENA.cx, ARENA.top + 2, ARENA.cz - 8], [ARENA.cx, ARENA.top + 1, ARENA.cz]);
   for (const [name, f] of [['铁傀儡', golem], ['僵尸', zombie]]) {
-    const meshes = boneMeshes(f);
-    ok(`视锥里有${name}的每一块骨头`, meshes.every(m => view.intersectsObject(m)),
-      `${meshes.filter(m => !view.intersectsObject(m)).length} 块被裁掉`);
+    ok(`视锥里有${name}的蒙皮网格`, view.intersectsObject(f.mesh));
   }
   // 远处视角仍然会被裁掉，说明裁剪本身还在工作。
   const far = frustumAt([0, 2, 0], [0, 2, -20]);
-  ok('远处视角下会被裁掉', boneMeshes(golem).every(m => !far.intersectsObject(m)));
+  ok('远处视角下会被裁掉', !far.intersectsObject(golem.mesh));
 }
 
 console.log('\n# 互相引用（不能各打各的）');
@@ -186,11 +211,11 @@ console.log('\n# 骨头真的在擂台上');
   const { golem, zombie } = makePair();
   tick({ golem, zombie }, 5);
   for (const [name, f] of [['铁傀儡', golem], ['僵尸', zombie]]) {
-    f.root.updateMatrixWorld(true);
-    const pts = boneMeshes(f).map(worldPos);
+    f.sync();
+    const pts = f.mesh.skeleton.bones.map(worldPos);
     ok(`${name}骨头坐标没有 NaN`, pts.every(p => Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z)));
     const box = boneBox(f), size = box.getSize(new THREE.Vector3());
-    ok(`${name}站在台面上`, box.min.y >= ARENA.top - 0.25, `minY=${box.min.y.toFixed(2)}`);
+    ok(`${name}站在台面上`, box.min.y >= ARENA.top - 0.02, `minY=${box.min.y.toFixed(2)}`);
     ok(`${name}身高合理`, size.y > 1.5 && size.y < 4, `height=${size.y.toFixed(2)}`);
     ok(`${name}宽度合理`, size.x > 0.4 && size.z > 0.4, `w=${size.x.toFixed(2)} d=${size.z.toFixed(2)}`);
     // 骨头彼此分得开，不是全塌在一个点上（InstancedMesh 那个 bug 的症状）。
@@ -201,6 +226,26 @@ console.log('\n# 骨头真的在擂台上');
       box.min.z > ARENA.cz - ARENA.half - 1 && box.max.z < ARENA.cz + ARENA.half + 1,
       `x=[${box.min.x.toFixed(2)}, ${box.max.x.toFixed(2)}] z=[${box.min.z.toFixed(2)}, ${box.max.z.toFixed(2)}]`);
   }
+}
+
+console.log('\n# 倒地与起身不穿台面');
+{
+  const { golem, zombie } = makePair();
+  golem.hurt(1000);
+  for (let i = 0; i < 90; i++) { golem.update(1 / 60, null, null); zombie.update(1 / 60, null, null); }
+  ok('铁傀儡被打倒', golem.isDead());
+  const dead = boneBox(golem);
+  ok('倒地后没有穿进台面', dead.min.y >= ARENA.top - 0.02, `minY=${dead.min.y.toFixed(2)}`);
+  ok('倒地后身体确实倒下', Math.abs(golem.bones.body.rotation.x) > 0.5, `pitch=${golem.bones.body.rotation.x.toFixed(2)}`);
+
+  let low = Infinity;
+  for (let i = 0; i < 60 * 6; i++) {
+    golem.update(1 / 60, null, null);
+    zombie.update(1 / 60, null, null);
+    if (i % 6 === 0) low = Math.min(low, boneBox(golem).min.y);
+  }
+  ok('重生起身也没有穿进台面', low >= ARENA.top - 0.02, `minY=${low.toFixed(2)}`);
+  ok('重生后回到站立状态', !golem.isDead(), `state=${golem.state}`);
 }
 
 console.log('\n# 边界情况');
