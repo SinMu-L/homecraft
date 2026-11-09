@@ -4,7 +4,19 @@ import posts from './posts.js';
 import { BOARD } from './board.js';
 
 // The south shore ends at the pool; its last sea-facing cell is submerged.
-export const ISLAND = { x0: -36, x1: 38, z0: -26, z1: 31 };
+// 东边向外扩出 12 米陆地，用来放铁傀儡 vs 僵尸的擂台。
+export const ISLAND = { x0: -36, x1: 50, z0: -26, z1: 31 };
+
+// 擂台：建在东边新陆地上，离车道和露台都有一段距离。擂台是个抬高的
+// 石质方台，四角立柱围栏；两个斗士在台中心两侧对打，死后原地重生。
+export const ARENA = {
+  cx: 44, cz: 10,           // 擂台中心
+  half: 4.5,                // 台面半边长（9×9 米台面）
+  top: 0.6,                 // 台面离地高度，斗士站在这个高度上
+  // 两个斗士的开战站位：台中心两侧，沿 x 轴对望
+  golem: { x: 44 - 2.2, z: 10, yaw: 0, y: 0.6 },        // 铁傀儡在西侧，朝东（+x）
+  zombie: { x: 44 + 2.2, z: 10, yaw: Math.PI, y: 0.6 }, // 僵尸在东侧，朝西（-x）
+};
 
 // House interior; the walls occupy the ring of cells just outside it.
 export const HOUSE = { x0: -20, x1: 24, z0: -12, z1: 16, height: 10 };

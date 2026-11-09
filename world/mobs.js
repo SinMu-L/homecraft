@@ -443,3 +443,178 @@ export function createAnimal({ kind, x, z, yaw }) {
   }
   return { root, mesh, update };
 }
+
+// ---- 擂台斗士 ------------------------------------------------------------
+// 铁傀儡和僵尸在擂台上对打：互相靠近到攻击距离后挥拳，命中扣血；一方
+// 血量归零就倒地，几秒后在原位满血重生，继续打。造型各自独立（铁傀儡
+// 复用站岗版的比例与配色，僵尸是绿色身体、前伸的双臂），战斗逻辑共用
+// 一个 fighter 状态机。
+//
+// 状态：APPROACH（走向对手）→ STRIKE（挥拳 + 命中判定）→ DEAD（倒地
+// 计时）→ 重生回 APPROACH。不分配新对象：只改已有骨架的旋转/位移。
+
+const FIGHT = {
+  hp: 100,           // 满血
+  damage: 12,        // 每拳伤害
+  reach: 1.6,        // 进入这个距离就挥拳
+  strikeTime: 0.5,   // 挥拳动作时长
+  cooldown: 1.1,     // 两次攻击间隔
+  respawn: 3.0,      // 死亡后重生秒数
+  speed: 1.1,        // 接近时的移动速度
+};
+
+// 战斗状态机：绑定到一个斗士骨架上，返回 update(dt) 推动状态。
+// `self` 是 { root, parts }，`home` 是重生点 { x, z, yaw }，
+// `foeRef` 是 { get: () => fighter | null } 以便双方互相引用。
+function fighter({ root, parts, home, foeRef, attackArm, deathAxis = 'z' }) {
+  let hp = FIGHT.hp, state = 'APPROACH', timer = 0, strikeHit = false;
+  const reset = () => {
+    hp = FIGHT.hp; state = 'APPROACH'; timer = 0; strikeHit = false;
+    root.position.set(home.x, home.y ?? 0, home.z);
+    root.rotation.y = home.yaw;
+    parts.body.rotation.set(0, 0, 0);
+    parts.body.position.y = 0;
+  };
+  reset();
+  function update(dt, nav, player) {
+    const foe = foeRef.get();
+    timer += dt;
+    if (state === 'DEAD') {
+      // 倒地：整体绕 deathAxis 翻倒 90°，并下沉一点贴地
+      const fall = Math.min(1, timer / 0.35);
+      parts.body.rotation[deathAxis] = -Math.PI / 2 * fall;
+      parts.body.position.y = -0.2 * fall;
+      if (timer >= FIGHT.respawn) { reset(); }
+      return;
+    }
+    if (!foe) return;
+    const dx = foe.root.position.x - root.position.x;
+    const dz = foe.root.position.z - root.position.z;
+    const d = Math.hypot(dx, dz);
+    // 始终面朝对手
+    const goal = Math.atan2(dx, dz);
+    const diff = Math.atan2(Math.sin(goal - root.rotation.y), Math.cos(goal - root.rotation.y));
+    root.rotation.y += diff * Math.min(1, dt * 6);
+    if (state === 'APPROACH') {
+      if (d > FIGHT.reach) {
+        // 走向对手
+        const move = Math.min(d - FIGHT.reach, dt * FIGHT.speed);
+        root.position.x += dx / d * move;
+        root.position.z += dz / d * move;
+        // 走路：腿交替摆
+        const stride = Math.sin(timer * 6);
+        parts.legs[0].rotation.x = stride * 0.4;
+        parts.legs[1].rotation.x = -stride * 0.4;
+        parts.body.position.y = Math.abs(Math.sin(timer * 6)) * 0.03;
+      } else {
+        // 进入攻击距离
+        state = 'STRIKE'; timer = 0; strikeHit = false;
+      }
+    } else if (state === 'STRIKE') {
+      // 挥拳：攻击臂从抬起挥到前伸，在中段做一次命中判定
+      const p = Math.min(1, timer / FIGHT.strikeTime);
+      // 0→抬起(-1.2)，0.5→前伸(0.3)，1→收回(-0.3)
+      const arm = p < 0.5 ? -1.2 + (0.3 - (-1.2)) * (p / 0.5) : 0.3 + (-0.3 - 0.3) * ((p - 0.5) / 0.5);
+      parts.arms[attackArm].rotation.x = arm;
+      parts.legs[0].rotation.x = parts.legs[1].rotation.x = 0;
+      parts.body.position.y = 0;
+      // 命中判定：动作到中段、对手还在攻击距离内、对手不是死亡状态
+      if (!strikeHit && p >= 0.45 && d <= FIGHT.reach + 0.4 && !foe.isDead()) {
+        foe.hurt(FIGHT.damage);
+        strikeHit = true;
+      }
+      if (p >= 1 && timer >= FIGHT.cooldown) {
+        state = 'APPROACH'; timer = 0;
+        parts.arms[attackArm].rotation.x = -0.3;
+      }
+    }
+  }
+  return {
+    root, update,
+    isDead: () => state === 'DEAD',
+    hurt: (dmg) => {
+      if (state === 'DEAD') return;
+      hp -= dmg;
+      if (hp <= 0) { hp = 0; state = 'DEAD'; timer = 0; }
+    },
+  };
+}
+
+// 铁傀儡斗士造型：和站岗版同比例，但 update 走 fighter 状态机。
+export function createFighterGolem({ x, z, yaw, y, foeRef }) {
+  const { root, group, box, build } = rig();
+  const iron = 0xd8d4c8, dark = 0x9d9a8e, vine = 0x5d7a37, flower = 0xb8392f, eye = 0x1a1f22;
+  const body = group(root, 0, 0, 0);
+  const torso = group(body, 0, 1.62, 0);
+  box(torso, 1.0, 0.72, 0.62, iron, 0, 0.36, 0);
+  box(torso, 1.0, 0.18, 0.64, dark, 0, -0.02, 0);
+  box(torso, 0.34, 0.30, 0.03, vine, -0.12, 0.44, 0.32);
+  box(torso, 0.22, 0.16, 0.03, vine, 0.20, 0.30, 0.32);
+  box(torso, 0.1, 0.1, 0.04, flower, -0.20, 0.52, 0.33);
+  const head = group(torso, 0, 0.72, 0);
+  box(head, 0.52, 0.46, 0.46, iron, 0, 0.23, 0);
+  box(head, 0.5, 0.1, 0.48, dark, 0, 0.02, 0);
+  for (const s of [-1, 1]) box(head, 0.1, 0.07, 0.02, eye, s * 0.12, 0.3, 0.235);
+  const arms = [];
+  for (const s of [-1, 1]) {
+    const shoulder = group(torso, s * 0.62, 0.64, 0);
+    box(shoulder, 0.26, 0.86, 0.28, iron, 0, -0.4, 0);
+    box(shoulder, 0.22, 0.24, 0.24, dark, 0, -0.9, 0);
+    arms.push(shoulder);
+  }
+  const legs = [];
+  for (const s of [-1, 1]) {
+    const hip = group(body, s * 0.24, 1.02, 0);
+    box(hip, 0.28, 0.9, 0.3, iron, 0, -0.45, 0);
+    box(hip, 0.3, 0.1, 0.36, dark, 0, -0.94, 0.02);
+    legs.push(hip);
+  }
+  const { mesh, upload } = build(
+    'arena-golem', new THREE.Sphere(new THREE.Vector3(x, 1.7, z), 2.4), { radius: 0.85, opacity: 0.26, sx: 1.15, sz: 0.9 },
+  );
+  const parts = { body, torso, head, arms, legs };
+  const f = fighter({ root, parts, home: { x, z, yaw, y }, foeRef, attackArm: 1, deathAxis: 'z' });
+  // 包一层 update 以便每次推骨架后上传矩阵
+  const orig = f.update;
+  f.update = function (dt, nav, player) { orig(dt, nav, player); upload(); };
+  f.mesh = mesh;
+  return f;
+}
+
+// 僵尸斗士造型：绿色身体、光头、双臂前伸做经典僵尸姿势。和铁傀儡一样
+// 走 fighter 状态机，但攻击用右臂（arms[1]）挥击，倒地绕 x 轴后仰。
+export function createFighterZombie({ x, z, yaw, y, foeRef }) {
+  const { root, group, box, build } = rig();
+  const skin = 0x4f7a3f, dark = 0x35522a, shirt = 0x6b8aa0, pants = 0x3a3f4a, eye = 0x1a1a1a;
+  const body = group(root, 0, 0, 0);
+  const torso = group(body, 0, 1.05, 0);
+  box(torso, 0.5, 0.7, 0.3, shirt, 0, 0.35, 0);            // 衬衫
+  box(torso, 0.52, 0.16, 0.32, dark, 0, 0.02, 0);          // 腰带
+  const head = group(torso, 0, 0.7, 0);
+  box(head, 0.44, 0.44, 0.4, skin, 0, 0.22, 0);
+  for (const s of [-1, 1]) box(head, 0.07, 0.09, 0.02, eye, s * 0.13, 0.28, 0.205);
+  // 僵尸标志性前伸双臂：默认抬起，攻击时由 fighter 操控右臂
+  const arms = [];
+  for (const s of [-1, 1]) {
+    const shoulder = group(torso, s * 0.32, 0.6, 0);
+    box(shoulder, 0.16, 0.5, 0.18, skin, 0, -0.22, 0);
+    box(shoulder, 0.15, 0.14, 0.15, skin, 0, -0.5, 0.02);
+    shoulder.rotation.x = -1.2;   // 默认前伸
+    arms.push(shoulder);
+  }
+  const legs = [];
+  for (const s of [-1, 1]) {
+    const hip = group(body, s * 0.14, 0.72, 0);
+    box(hip, 0.18, 0.7, 0.2, pants, 0, -0.35, 0);
+    legs.push(hip);
+  }
+  const { mesh, upload } = build(
+    'arena-zombie', new THREE.Sphere(new THREE.Vector3(x, 1.0, z), 1.6), { radius: 0.42, opacity: 0.2 },
+  );
+  const parts = { body, torso, head, arms, legs };
+  const f = fighter({ root, parts, home: { x, z, yaw, y }, foeRef, attackArm: 1, deathAxis: 'x' });
+  const orig = f.update;
+  f.update = function (dt, nav, player) { orig(dt, nav, player); upload(); };
+  f.mesh = mesh;
+  return f;
+}
