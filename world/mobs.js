@@ -496,9 +496,12 @@ function fighter({ root, parts, home, foeRef, attackArm, deathAxis = 'z' }) {
     const diff = Math.atan2(Math.sin(goal - root.rotation.y), Math.cos(goal - root.rotation.y));
     root.rotation.y += diff * Math.min(1, dt * 6);
     if (state === 'APPROACH') {
-      if (d > FIGHT.reach) {
+      // 目标距离比攻击距离再近一点：正好停在 reach 上时，浮点误差会让
+      // `d > reach` 一直为真，两人贴在一起却永远进不了挥拳状态。
+      const close = FIGHT.reach - 0.15;
+      if (d > close + 1e-4) {
         // 走向对手
-        const move = Math.min(d - FIGHT.reach, dt * FIGHT.speed);
+        const move = Math.min(d - close, dt * FIGHT.speed);
         root.position.x += dx / d * move;
         root.position.z += dz / d * move;
         // 走路：腿交替摆
@@ -540,81 +543,124 @@ function fighter({ root, parts, home, foeRef, attackArm, deathAxis = 'z' }) {
   };
 }
 
-// 铁傀儡斗士造型：和站岗版同比例，但 update 走 fighter 状态机。
-export function createFighterGolem({ x, z, yaw, y, foeRef }) {
-  const { root, group, box, build } = rig();
-  const iron = 0xd8d4c8, dark = 0x9d9a8e, vine = 0x5d7a37, flower = 0xb8392f, eye = 0x1a1f22;
-  const body = group(root, 0, 0, 0);
-  const torso = group(body, 0, 1.62, 0);
-  box(torso, 1.0, 0.72, 0.62, iron, 0, 0.36, 0);
-  box(torso, 1.0, 0.18, 0.64, dark, 0, -0.02, 0);
-  box(torso, 0.34, 0.30, 0.03, vine, -0.12, 0.44, 0.32);
-  box(torso, 0.22, 0.16, 0.03, vine, 0.20, 0.30, 0.32);
-  box(torso, 0.1, 0.1, 0.04, flower, -0.20, 0.52, 0.33);
-  const head = group(torso, 0, 0.72, 0);
-  box(head, 0.52, 0.46, 0.46, iron, 0, 0.23, 0);
-  box(head, 0.5, 0.1, 0.48, dark, 0, 0.02, 0);
-  for (const s of [-1, 1]) box(head, 0.1, 0.07, 0.02, eye, s * 0.12, 0.3, 0.235);
-  const arms = [];
-  for (const s of [-1, 1]) {
-    const shoulder = group(torso, s * 0.62, 0.64, 0);
-    box(shoulder, 0.26, 0.86, 0.28, iron, 0, -0.4, 0);
-    box(shoulder, 0.22, 0.24, 0.24, dark, 0, -0.9, 0);
-    arms.push(shoulder);
+// ---- 斗士的骨架：普通 Mesh，每根骨头一块合并几何 -------------------------
+// 这里刻意不用 InstancedMesh：实例矩阵没有可靠地传到 GPU，17 个方块会全部
+// 塌在原点、显示成一个灰方块。改成把每根骨头上的方块合并成一块带顶点色的
+// 几何体 —— 普通 Mesh 的渲染路径是稳的（脚下的影子就是普通 Mesh）。
+// 一只斗士 5 个 draw call（躯干+头、两条胳膊、两条腿），三角形可以忽略。
+
+const FIGHTER_MAT = new THREE.MeshLambertMaterial({ vertexColors: true });
+
+// 把一组 [宽, 高, 深, x, y, z, 颜色] 方块合并成一块几何体，颜色写进顶点色。
+function mergedBoxes(boxes) {
+  const position = [], normal = [], color = [], index = [];
+  const c = new THREE.Color();
+  let base = 0;
+  for (const [w, h, d, x, y, z, hex] of boxes) {
+    const g = new THREE.BoxGeometry(w, h, d);
+    g.translate(x, y, z);
+    const p = g.attributes.position.array, n = g.attributes.normal.array, ix = g.index.array;
+    c.set(hex);
+    for (let i = 0; i < p.length; i += 3) {
+      position.push(p[i], p[i + 1], p[i + 2]);
+      normal.push(n[i], n[i + 1], n[i + 2]);
+      color.push(c.r, c.g, c.b);
+    }
+    for (let i = 0; i < ix.length; i++) index.push(ix[i] + base);
+    base += g.attributes.position.count;
+    g.dispose();
   }
-  const legs = [];
-  for (const s of [-1, 1]) {
-    const hip = group(body, s * 0.24, 1.02, 0);
-    box(hip, 0.28, 0.9, 0.3, iron, 0, -0.45, 0);
-    box(hip, 0.3, 0.1, 0.36, dark, 0, -0.94, 0.02);
-    legs.push(hip);
-  }
-  const { mesh, upload } = build(
-    'arena-golem', new THREE.Sphere(new THREE.Vector3(x, 1.7, z), 2.4), { radius: 0.85, opacity: 0.26, sx: 1.15, sz: 0.9 },
-  );
-  const parts = { body, torso, head, arms, legs };
-  const f = fighter({ root, parts, home: { x, z, yaw, y }, foeRef, attackArm: 1, deathAxis: 'z' });
-  // 包一层 update 以便每次推骨架后上传矩阵
-  const orig = f.update;
-  f.update = function (dt, nav, player) { orig(dt, nav, player); upload(); };
-  f.mesh = mesh;
-  return f;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(position, 3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(normal, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(color, 3));
+  geo.setIndex(index);
+  geo.computeBoundingSphere();   // 局部包围球，视锥裁剪才对
+  return geo;
 }
 
-// 僵尸斗士造型：绿色身体、光头、双臂前伸做经典僵尸姿势。和铁傀儡一样
-// 走 fighter 状态机，但攻击用右臂（arms[1]）挥击，倒地绕 x 轴后仰。
+// 一根骨头：一个 Group 当转轴，里面挂一块合并好的 Mesh。
+function bone(parent, x, y, z, boxes) {
+  const g = new THREE.Group();
+  g.position.set(x, y, z);
+  if (boxes) g.add(new THREE.Mesh(mergedBoxes(boxes), FIGHTER_MAT));
+  parent.add(g);
+  return g;
+}
+
+// 组装：脚下影子 + fighter 状态机。arms/legs 是 Group 数组，body 是躯干转轴。
+function finishFighter({ root, body, arms, legs }, { x, z, yaw, y, foeRef, attackArm, deathAxis, sx, sz }) {
+  const shadow = new THREE.Mesh(BLOB_GEO, BLOB_MAT);
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.y = 0.014;
+  shadow.scale.set(sx ?? 1, sz ?? 1, 1);
+  root.add(shadow);
+  return fighter({ root, parts: { body, arms, legs }, home: { x, z, yaw, y }, foeRef, attackArm, deathAxis });
+}
+
+// 铁傀儡斗士：和站岗版同比例同配色，但走 fighter 状态机。
+export function createFighterGolem({ x, z, yaw, y, foeRef }) {
+  const iron = 0xd8d4c8, dark = 0x9d9a8e, vine = 0x5d7a37, flower = 0xb8392f, eye = 0x1a1f22;
+  const root = new THREE.Group();
+  const body = new THREE.Group();
+  root.add(body);
+  // 躯干和头合并成一块：头不单独转，省一次 draw call。
+  bone(body, 0, 1.62, 0, [
+    [1.0, 0.72, 0.62, 0, 0.36, 0, iron],
+    [1.0, 0.18, 0.64, 0, -0.02, 0, dark],
+    [0.34, 0.30, 0.03, -0.12, 0.44, 0.32, vine],
+    [0.22, 0.16, 0.03, 0.20, 0.30, 0.32, vine],
+    [0.1, 0.1, 0.04, -0.20, 0.52, 0.33, flower],
+    [0.52, 0.46, 0.46, 0, 0.95, 0, iron],
+    [0.5, 0.1, 0.48, 0, 0.74, 0, dark],
+    [0.1, 0.07, 0.02, -0.12, 1.02, 0.235, eye],
+    [0.1, 0.07, 0.02, 0.12, 1.02, 0.235, eye],
+  ]);
+  const arms = [-1, 1].map(s => bone(body, s * 0.62, 2.26, 0, [
+    [0.26, 0.86, 0.28, 0, -0.4, 0, iron],
+    [0.22, 0.24, 0.24, 0, -0.9, 0, dark],
+  ]));
+  const legs = [-1, 1].map(s => bone(body, s * 0.24, 1.02, 0, [
+    [0.28, 0.9, 0.3, 0, -0.45, 0, iron],
+    [0.3, 0.1, 0.36, 0, -0.94, 0.02, dark],
+  ]));
+  return finishFighter({ root, body, arms, legs },
+    { x, z, yaw, y, foeRef, attackArm: 1, deathAxis: 'z', sx: 1.15, sz: 0.9 });
+}
+
+// 僵尸斗士：绿色身体、双臂前伸的经典姿势，倒地绕 x 轴后仰。
 export function createFighterZombie({ x, z, yaw, y, foeRef }) {
-  const { root, group, box, build } = rig();
   const skin = 0x4f7a3f, dark = 0x35522a, shirt = 0x6b8aa0, pants = 0x3a3f4a, eye = 0x1a1a1a;
-  const body = group(root, 0, 0, 0);
-  const torso = group(body, 0, 1.05, 0);
-  box(torso, 0.5, 0.7, 0.3, shirt, 0, 0.35, 0);            // 衬衫
-  box(torso, 0.52, 0.16, 0.32, dark, 0, 0.02, 0);          // 腰带
-  const head = group(torso, 0, 0.7, 0);
-  box(head, 0.44, 0.44, 0.4, skin, 0, 0.22, 0);
-  for (const s of [-1, 1]) box(head, 0.07, 0.09, 0.02, eye, s * 0.13, 0.28, 0.205);
-  // 僵尸标志性前伸双臂：默认抬起，攻击时由 fighter 操控右臂
-  const arms = [];
-  for (const s of [-1, 1]) {
-    const shoulder = group(torso, s * 0.32, 0.6, 0);
-    box(shoulder, 0.16, 0.5, 0.18, skin, 0, -0.22, 0);
-    box(shoulder, 0.15, 0.14, 0.15, skin, 0, -0.5, 0.02);
-    shoulder.rotation.x = -1.2;   // 默认前伸
-    arms.push(shoulder);
-  }
-  const legs = [];
-  for (const s of [-1, 1]) {
-    const hip = group(body, s * 0.14, 0.72, 0);
-    box(hip, 0.18, 0.7, 0.2, pants, 0, -0.35, 0);
-    legs.push(hip);
-  }
-  const { mesh, upload } = build(
-    'arena-zombie', new THREE.Sphere(new THREE.Vector3(x, 1.0, z), 1.6), { radius: 0.42, opacity: 0.2 },
-  );
-  const parts = { body, torso, head, arms, legs };
-  const f = fighter({ root, parts, home: { x, z, yaw, y }, foeRef, attackArm: 1, deathAxis: 'x' });
-  const orig = f.update;
-  f.update = function (dt, nav, player) { orig(dt, nav, player); upload(); };
-  f.mesh = mesh;
-  return f;
+  const root = new THREE.Group();
+  const body = new THREE.Group();
+  root.add(body);
+  bone(body, 0, 1.05, 0, [
+    [0.5, 0.7, 0.3, 0, 0.35, 0, shirt],       // 衬衫
+    [0.52, 0.16, 0.32, 0, 0.02, 0, dark],     // 腰带
+    [0.44, 0.44, 0.4, 0, 0.92, 0, skin],      // 头
+    [0.07, 0.09, 0.02, -0.13, 0.98, 0.205, eye],
+    [0.07, 0.09, 0.02, 0.13, 0.98, 0.205, eye],
+  ]);
+  const arms = [-1, 1].map(s => bone(body, s * 0.32, 1.65, 0, [
+    [0.16, 0.5, 0.18, 0, -0.22, 0, skin],
+    [0.15, 0.14, 0.15, 0, -0.5, 0.02, skin],
+  ]));
+  for (const a of arms) a.rotation.x = -1.2;   // 默认前伸
+  const legs = [-1, 1].map(s => bone(body, s * 0.14, 0.72, 0, [
+    [0.18, 0.7, 0.2, 0, -0.35, 0, pants],
+  ]));
+  return finishFighter({ root, body, arms, legs },
+    { x, z, yaw, y, foeRef, attackArm: 1, deathAxis: 'x' });
+}
+
+// 把两个斗士接成一对：各自通过 foeRef 指向对方。
+// 引用必须最后再接，否则创建第二个时第一个还拿不到对手。
+// `arena` 就是 layout.js 里的 ARENA。build.js 和测试都用这一个实现。
+export function createArenaFighters(arena) {
+  const golemRef = { get: () => null }, zombieRef = { get: () => null };
+  const golem = createFighterGolem({ ...arena.golem, foeRef: zombieRef });
+  const zombie = createFighterZombie({ ...arena.zombie, foeRef: golemRef });
+  golemRef.get = () => golem;      // 铁傀儡的引用指向铁傀儡本人
+  zombieRef.get = () => zombie;    // 僵尸的引用指向僵尸本人
+  return { golem, zombie };
 }

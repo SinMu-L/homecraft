@@ -9,7 +9,7 @@ import { buildMountain } from './mountain.js';
 import { buildRoofAccess } from './roof-access.js';
 import { createStainless } from './stainless.js';
 import { createVertec } from './vertec.js';
-import { createGolem, createVillager, createTrader, createAnimal, createFighterGolem, createFighterZombie } from './mobs.js';
+import { createGolem, createVillager, createTrader, createAnimal, createArenaFighters } from './mobs.js';
 import { BoxBatch } from '@engine/world/blocks.js';
 import { ISLAND, FOREST, COURT, RIM, MOBS, ARENA } from './layout.js';
 
@@ -110,11 +110,7 @@ export function setup({ stage, world, player, avatar, sound, nav }) {
     ...MOBS.animals.map(a => createAnimal(a)),
   ];
   // 擂台上的两个斗士：铁傀儡和僵尸互相引用，死后原地重生继续打。
-  const golemRef = { get: () => null }, zombieRef = { get: () => null };
-  const golemFighter = createFighterGolem({ ...ARENA.golem, foeRef: zombieRef });
-  const zombieFighter = createFighterZombie({ ...ARENA.zombie, foeRef: golemRef });
-  golemRef.get = () => zombieFighter;
-  zombieRef.get = () => golemFighter;
+  const { golem: golemFighter, zombie: zombieFighter } = createArenaFighters(ARENA);
   mobs.push(golemFighter, zombieFighter);
   for (const m of mobs) stage.scene.add(m.root);
   return {
